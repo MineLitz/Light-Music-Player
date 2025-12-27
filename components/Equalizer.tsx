@@ -14,6 +14,7 @@ const PRESETS: Record<string, number[]> = {
   'Jazz': [3, 2, 0, 2, 3, 4],
   'Rock': [5, 3, -1, 2, 4, 6],
   'Latin': [2, 1, 0, 2, 2, 3],
+  'Forró': [5, 3, 0, 2, 4, 5],
   'Bass Boost': [8, 5, 0, 0, 0, 0],
   'Bass Reduce': [-6, -4, 0, 0, 0, 0],
   'Treble Boost': [0, 0, 0, 2, 4, 6],

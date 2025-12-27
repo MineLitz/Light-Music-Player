@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Home, Search, Library, Settings, Play, Pause, SkipBack, SkipForward, 
   Repeat, Shuffle, Volume2, Music, Upload, User as UserIcon, LogOut, 
   Disc, Heart, Clock, X, Edit2, Volume1, VolumeX, Plus, MoreHorizontal, Save, Globe, ListPlus, Trash2, Sidebar, Image as ImageIcon,
   MonitorPlay, ChevronDown, Laptop2, Ban, Gamepad2, Wifi, WifiOff, BarChart2, Share2, MoreVertical, ListOrdered, GripVertical, Filter, 
-  CornerDownLeft, PlayCircle
+  CornerDownLeft, PlayCircle, Grid
 } from 'lucide-react';
 import { Song, SongMetadata, Playlist, View, User, EQSettings, Language } from './types';
 import { 
   initDB, addSongToDB, getAllSongsMetadata, getSongWithCover, updateSongMetadata, 
-  createPlaylistDB, getAllPlaylistsDB, updatePlaylist, deletePlaylist
+  createPlaylistDB, getAllPlaylistsDB, updatePlaylist, deletePlaylist, getSongCover
 } from './services/db';
 import { audioEngine } from './services/audioEngine';
 import Equalizer from './components/Equalizer';
@@ -66,7 +66,7 @@ const TRANSLATIONS = {
     artistView: 'Artist',
     albumView: 'Album',
     editArtist: 'Edit Artist Name',
-    editAlbum: 'Edit Album Name',
+    editAlbum: 'Edit Album Details',
     bgMode: 'Now Playing Background',
     bgModeCover: 'Song Cover (Blurred)',
     bgModeCustom: 'Custom GIF/Image',
@@ -87,6 +87,8 @@ const TRANSLATIONS = {
     allFormats: 'All Formats',
     previewAlbum: 'Preview Info',
     playingFrom: 'Playing from',
+    albums: 'Albums',
+    editAlbumDetails: 'Edit Album Details',
   },
   pt: {
     home: 'Início',
@@ -137,7 +139,7 @@ const TRANSLATIONS = {
     artistView: 'Artista',
     albumView: 'Álbum',
     editArtist: 'Editar Nome do Artista',
-    editAlbum: 'Editar Nome do Álbum',
+    editAlbum: 'Editar Detalhes do Álbum',
     bgMode: 'Fundo do Ouvindo Agora',
     bgModeCover: 'Capa da Música (Desfocada)',
     bgModeCustom: 'GIF/Imagem Personalizada',
@@ -158,6 +160,8 @@ const TRANSLATIONS = {
     allFormats: 'Todos os Formatos',
     previewAlbum: 'Ver Info',
     playingFrom: 'Tocando de',
+    albums: 'Álbuns',
+    editAlbumDetails: 'Editar Detalhes do Álbum',
   }
 };
 
@@ -178,6 +182,257 @@ const formatTime = (seconds: number) => {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+// --- Reusable Song Art Component --- //
+
+interface SongArtProps {
+    song: SongMetadata;
+    className?: string;
+    children?: React.ReactNode;
+    onClick?: (e: React.MouseEvent) => void;
+}
+
+const SongArt: React.FC<SongArtProps> = React.memo(({ song, className, children, onClick }) => {
+    const [coverUrl, setCoverUrl] = useState<string | null>(null);
+
+    useEffect(() => {
+        let isMounted = true;
+        let url: string | null = null;
+
+        if (song.hasCover) {
+            getSongCover(song.id).then(blob => {
+                if (isMounted && blob) {
+                    url = URL.createObjectURL(blob);
+                    setCoverUrl(url);
+                }
+            });
+        } else {
+            setCoverUrl(null);
+        }
+
+        return () => {
+            isMounted = false;
+            if (url) URL.revokeObjectURL(url);
+        };
+    }, [song.id, song.hasCover]);
+
+    return (
+        <div 
+            className={`relative bg-gray-800 overflow-hidden ${className || ''}`}
+            onClick={onClick}
+            style={!coverUrl ? { background: generateCover(song.title) } : {}}
+        >
+            {coverUrl && (
+                <img src={coverUrl} alt={song.title} className="w-full h-full object-cover" />
+            )}
+            {children}
+        </div>
+    );
+});
+
+
+// --- Extracted Components (Prevent Re-renders) --- //
+
+interface AddToPlaylistModalProps {
+  song: SongMetadata | null;
+  onClose: () => void;
+  playlists: Playlist[];
+  onAdd: (playlistId: string) => void;
+  t: (key: keyof typeof TRANSLATIONS.en) => string;
+}
+
+const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({ song, onClose, playlists, onAdd, t }) => {
+    if (!song) return null;
+    return (
+      <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-[#282828] rounded-xl p-6 w-full max-w-sm shadow-2xl border border-white/10">
+              <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-white">{t('selectPlaylist')}</h3>
+                    <button onClick={onClose}><X size={20} className="text-gray-400 hover:text-white" /></button>
+              </div>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {playlists.length === 0 && <p className="text-gray-500 italic text-sm text-center py-4">No playlists yet.</p>}
+                  {playlists.map(pl => (
+                      <button 
+                          key={pl.id}
+                          onClick={() => onAdd(pl.id)}
+                          className="w-full text-left p-3 rounded hover:bg-[#333] flex items-center gap-3 transition"
+                      >
+                          <div className="w-8 h-8 bg-gray-700 flex items-center justify-center rounded"><Music size={14}/></div>
+                          <span className="text-white font-medium">{pl.name}</span>
+                      </button>
+                  ))}
+              </div>
+           </div>
+      </div>
+    );
+};
+
+interface EditModalProps {
+    song: SongMetadata;
+    onClose: () => void;
+    playlists: Playlist[];
+    onSave: (title: string, artist: string, album: string, genre: string, year: string, coverFile: File | null, selectedPlaylists: string[]) => Promise<void>;
+    t: (key: keyof typeof TRANSLATIONS.en) => string;
+}
+
+const EditModal: React.FC<EditModalProps> = ({ song, onClose, playlists, onSave, t }) => {
+    const [title, setTitle] = useState(song.title);
+    const [artist, setArtist] = useState(song.artist);
+    const [album, setAlbum] = useState(song.album);
+    const [genre, setGenre] = useState(song.genre || '');
+    const [year, setYear] = useState(song.year || '');
+    const [coverFile, setCoverFile] = useState<File | null>(null);
+    const [selectedPlaylists, setSelectedPlaylists] = useState<string[]>(song.playlistIds || []);
+    const [tempCoverUrl, setTempCoverUrl] = useState<string | null>(null);
+
+    // Initial load cover for preview
+    useEffect(() => {
+        let url: string | null = null;
+        if (song.hasCover) {
+             getSongCover(song.id).then(blob => {
+                 if(blob) {
+                     url = URL.createObjectURL(blob);
+                     setTempCoverUrl(url);
+                 }
+             });
+        }
+        return () => { if(url) URL.revokeObjectURL(url); }
+    }, [song.id]);
+
+    const togglePlaylist = (pid: string) => {
+        if (selectedPlaylists.includes(pid)) {
+            setSelectedPlaylists(selectedPlaylists.filter(id => id !== pid));
+        } else {
+            setSelectedPlaylists([...selectedPlaylists, pid]);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#282828] rounded-xl p-6 w-full max-w-md shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-white">{t('editInfo')}</h3>
+                    <button onClick={onClose}><X size={24} className="text-gray-400 hover:text-white" /></button>
+                </div>
+
+                <div className="space-y-4">
+                    {/* Cover Input */}
+                    <div className="flex justify-center mb-4">
+                        <label className="w-32 h-32 bg-gray-700 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-600 transition overflow-hidden relative group">
+                            {coverFile ? (
+                                <img src={URL.createObjectURL(coverFile)} className="w-full h-full object-cover" />
+                            ) : (
+                                tempCoverUrl ? 
+                                <img src={tempCoverUrl} className="w-full h-full object-cover" />
+                                : <div className="w-full h-full bg-cover" style={{ background: generateCover(title) }}></div>
+                            )}
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                <span className="text-xs font-bold text-white text-center px-2">{t('changeCover')}</span>
+                            </div>
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files && setCoverFile(e.target.files[0])} />
+                        </label>
+                    </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase">{t('title')}</label>
+                        <input type="text" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase">{t('artist')}</label>
+                        <input type="text" value={artist} onChange={e => setArtist(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase">{t('album')}</label>
+                        <input type="text" value={album} onChange={e => setAlbum(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-400 uppercase">{t('genre')}</label>
+                          <input type="text" value={genre} onChange={e => setGenre(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                      </div>
+                      <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-400 uppercase">{t('year')}</label>
+                          <input type="text" value={year} onChange={e => setYear(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 mt-2">
+                         <label className="text-xs font-bold text-gray-400 uppercase">{t('addToPlaylist')}</label>
+                         <div className="max-h-32 overflow-y-auto bg-[#181818] rounded p-2 space-y-1">
+                             {playlists.length === 0 && <p className="text-xs text-gray-500 italic">No playlists created.</p>}
+                             {playlists.map(pl => (
+                                 <div key={pl.id} className="flex items-center gap-2 cursor-pointer hover:bg-[#333] p-1 rounded" onClick={() => togglePlaylist(pl.id)}>
+                                     <div className={`w-4 h-4 border border-gray-500 rounded flex items-center justify-center ${selectedPlaylists.includes(pl.id) ? 'bg-green-500 border-green-500' : ''}`}>
+                                         {selectedPlaylists.includes(pl.id) && <div className="w-2 h-2 bg-white rounded-full" />}
+                                     </div>
+                                     <span className="text-sm text-gray-300 truncate">{pl.name}</span>
+                                 </div>
+                             ))}
+                         </div>
+                    </div>
+
+                    <button 
+                      onClick={() => onSave(title, artist, album, genre, year, coverFile, selectedPlaylists)}
+                      className="w-full py-3 bg-green-500 text-black font-bold rounded-full hover:scale-105 transition mt-4"
+                    >
+                        {t('save')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+interface EditAlbumModalProps {
+    albumName: string;
+    onClose: () => void;
+    songs: SongMetadata[]; // To extract initial year/artist
+    onSave: (oldName: string, newName: string, newArtist: string, newYear: string) => Promise<void>;
+    t: (key: keyof typeof TRANSLATIONS.en) => string;
+}
+
+const EditAlbumModal: React.FC<EditAlbumModalProps> = ({ albumName, onClose, songs, onSave, t }) => {
+    // Find representative song for defaults
+    const repSong = songs.find(s => s.album === albumName);
+    
+    const [name, setName] = useState(albumName);
+    const [artist, setArtist] = useState(repSong?.artist || '');
+    const [year, setYear] = useState(repSong?.year || '');
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#282828] rounded-xl p-6 w-full max-w-md shadow-2xl border border-white/10">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-white">{t('editAlbumDetails')}</h3>
+                    <button onClick={onClose}><X size={24} className="text-gray-400 hover:text-white" /></button>
+                </div>
+
+                <div className="space-y-4">
+                     <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase">{t('album')}</label>
+                        <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase">{t('artist')}</label>
+                        <input type="text" value={artist} onChange={e => setArtist(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase">{t('year')}</label>
+                        <input type="text" value={year} onChange={e => setYear(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
+                    </div>
+
+                    <button 
+                      onClick={() => onSave(albumName, name, artist, year)}
+                      className="w-full py-3 bg-green-500 text-black font-bold rounded-full hover:scale-105 transition mt-4"
+                    >
+                        {t('save')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // --- Main App --- //
@@ -214,12 +469,17 @@ const App: React.FC = () => {
   const [queue, setQueue] = useState<string[]>([]);
   const [currentSongCoverUrl, setCurrentSongCoverUrl] = useState<string | null>(null);
 
+  // UseRef for Audio Event Listener (Fixes Stale Closure bug for Auto-Next)
+  const handleNextRef = useRef<() => void>(() => {});
+
   // Settings State
   const [offlineMode, setOfflineMode] = useState(false);
 
   // UI State
   const [editingSong, setEditingSong] = useState<SongMetadata | null>(null);
   const [songToAddToPlaylist, setSongToAddToPlaylist] = useState<SongMetadata | null>(null);
+  const [editingAlbumName, setEditingAlbumName] = useState<string | null>(null);
+
   const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
@@ -261,6 +521,17 @@ const App: React.FC = () => {
   const availableYears = Array.from(new Set(songs.map(s => s.year).filter(Boolean))).sort().reverse();
   const availableFormats = Array.from(new Set(songs.map(s => s.format).filter(Boolean))).sort();
 
+  // Unique Albums
+  const uniqueAlbums = useMemo(() => {
+    const map = new Map<string, {name: string, artist: string, song: SongMetadata}>();
+    songs.forEach(s => {
+        if (!map.has(s.album)) {
+            map.set(s.album, { name: s.album, artist: s.artist, song: s });
+        }
+    });
+    return Array.from(map.values());
+  }, [songs]);
+
   // Filter logic based on view AND search filters
   let filteredSongs = songs;
 
@@ -294,7 +565,29 @@ const App: React.FC = () => {
 
   const isCurrentLiked = currentSongId ? likedSongs.has(currentSongId) : false;
 
-  // --- Effects --- //
+  // --- Handlers & Effects --- //
+
+  // Defined here so it can be used in effects
+  const handleNext = () => {
+    if (!queue.length) return;
+    let nextIndex = -1;
+    if (isShuffle) {
+      nextIndex = Math.floor(Math.random() * queue.length);
+    } else {
+      const currentIdx = queue.indexOf(currentSongId || '');
+      nextIndex = currentIdx + 1;
+    }
+    if (nextIndex >= queue.length) {
+      if (isRepeat) nextIndex = 0;
+      else return; 
+    }
+    playSong(queue[nextIndex]);
+  };
+
+  // Keep ref updated with latest handleNext closure
+  useEffect(() => {
+      handleNextRef.current = handleNext;
+  });
 
   // Initial Load (Settings & Data)
   useEffect(() => {
@@ -340,7 +633,12 @@ const App: React.FC = () => {
     const el = audioEngine.getElement();
     const onTimeUpdate = () => setCurrentTime(el.currentTime);
     const onDurationChange = () => setDuration(el.duration);
-    const onEnded = () => handleNext();
+    
+    // Fix: Use ref to call the latest handleNext, preventing stale closure issues
+    const onEnded = () => {
+        handleNextRef.current();
+    };
+
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
@@ -537,21 +835,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleNext = () => {
-    if (!queue.length) return;
-    let nextIndex = -1;
-    if (isShuffle) {
-      nextIndex = Math.floor(Math.random() * queue.length);
-    } else {
-      const currentIdx = queue.indexOf(currentSongId || '');
-      nextIndex = currentIdx + 1;
-    }
-    if (nextIndex >= queue.length) {
-      if (isRepeat) nextIndex = 0;
-      else return; 
-    }
-    playSong(queue[nextIndex]);
-  };
+  // handleNext is defined before the effect now (hoisted functionally, but updated in ref)
 
   const handlePrev = () => {
     if (!queue.length) return;
@@ -658,6 +942,16 @@ const App: React.FC = () => {
       loadLibrary();
   };
 
+  const handleSaveAlbumDetails = async (oldName: string, newName: string, newArtist: string, newYear: string) => {
+      const songsToUpdate = songs.filter(s => s.album === oldName);
+      for (const s of songsToUpdate) {
+          await updateSongMetadata(s.id, { album: newName, artist: newArtist, year: newYear });
+      }
+      if (selectedAlbum === oldName) setSelectedAlbum(newName);
+      setEditingAlbumName(null);
+      loadLibrary();
+  };
+
   const handleSaveMetadata = async (
       title: string, 
       artist: string, 
@@ -741,126 +1035,6 @@ const App: React.FC = () => {
 
   // --- Components --- //
 
-  const AddToPlaylistModal = () => {
-      if (!songToAddToPlaylist) return null;
-      return (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-             <div className="bg-[#282828] rounded-xl p-6 w-full max-w-sm shadow-2xl border border-white/10">
-                <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-bold text-white">{t('selectPlaylist')}</h3>
-                      <button onClick={() => setSongToAddToPlaylist(null)}><X size={20} className="text-gray-400 hover:text-white" /></button>
-                </div>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {playlists.length === 0 && <p className="text-gray-500 italic text-sm text-center py-4">No playlists yet.</p>}
-                    {playlists.map(pl => (
-                        <button 
-                            key={pl.id}
-                            onClick={() => handleQuickAddToPlaylist(pl.id)}
-                            className="w-full text-left p-3 rounded hover:bg-[#333] flex items-center gap-3 transition"
-                        >
-                            <div className="w-8 h-8 bg-gray-700 flex items-center justify-center rounded"><Music size={14}/></div>
-                            <span className="text-white font-medium">{pl.name}</span>
-                        </button>
-                    ))}
-                </div>
-             </div>
-        </div>
-      );
-  }
-
-  const EditModal = ({ song, onClose }: { song: SongMetadata, onClose: () => void }) => {
-      const [title, setTitle] = useState(song.title);
-      const [artist, setArtist] = useState(song.artist);
-      const [album, setAlbum] = useState(song.album);
-      const [genre, setGenre] = useState(song.genre || '');
-      const [year, setYear] = useState(song.year || '');
-      const [coverFile, setCoverFile] = useState<File | null>(null);
-      const [selectedPlaylists, setSelectedPlaylists] = useState<string[]>(song.playlistIds || []);
-
-      const togglePlaylist = (pid: string) => {
-          if (selectedPlaylists.includes(pid)) {
-              setSelectedPlaylists(selectedPlaylists.filter(id => id !== pid));
-          } else {
-              setSelectedPlaylists([...selectedPlaylists, pid]);
-          }
-      };
-
-      return (
-          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-[#282828] rounded-xl p-6 w-full max-w-md shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
-                  <div className="flex justify-between items-center mb-6">
-                      <h3 className="text-xl font-bold text-white">{t('editInfo')}</h3>
-                      <button onClick={onClose}><X size={24} className="text-gray-400 hover:text-white" /></button>
-                  </div>
-
-                  <div className="space-y-4">
-                      {/* Cover Input */}
-                      <div className="flex justify-center mb-4">
-                          <label className="w-32 h-32 bg-gray-700 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-600 transition overflow-hidden relative group">
-                              {coverFile ? (
-                                  <img src={URL.createObjectURL(coverFile)} className="w-full h-full object-cover" />
-                              ) : (
-                                  song.hasCover ? 
-                                  <div className="w-full h-full bg-cover" style={{ backgroundImage: `url(${generateCover(song.title)})` }}></div>
-                                  : <Music size={40} className="text-gray-400" />
-                              )}
-                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                                  <span className="text-xs font-bold text-white text-center px-2">{t('changeCover')}</span>
-                              </div>
-                              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files && setCoverFile(e.target.files[0])} />
-                          </label>
-                      </div>
-
-                      <div className="space-y-1">
-                          <label className="text-xs font-bold text-gray-400 uppercase">{t('title')}</label>
-                          <input type="text" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-xs font-bold text-gray-400 uppercase">{t('artist')}</label>
-                          <input type="text" value={artist} onChange={e => setArtist(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-xs font-bold text-gray-400 uppercase">{t('album')}</label>
-                          <input type="text" value={album} onChange={e => setAlbum(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                            <label className="text-xs font-bold text-gray-400 uppercase">{t('genre')}</label>
-                            <input type="text" value={genre} onChange={e => setGenre(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-bold text-gray-400 uppercase">{t('year')}</label>
-                            <input type="text" value={year} onChange={e => setYear(e.target.value)} className="w-full bg-[#3e3e3e] text-white p-2 rounded focus:ring-2 ring-green-500 outline-none" />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 mt-2">
-                           <label className="text-xs font-bold text-gray-400 uppercase">{t('addToPlaylist')}</label>
-                           <div className="max-h-32 overflow-y-auto bg-[#181818] rounded p-2 space-y-1">
-                               {playlists.length === 0 && <p className="text-xs text-gray-500 italic">No playlists created.</p>}
-                               {playlists.map(pl => (
-                                   <div key={pl.id} className="flex items-center gap-2 cursor-pointer hover:bg-[#333] p-1 rounded" onClick={() => togglePlaylist(pl.id)}>
-                                       <div className={`w-4 h-4 border border-gray-500 rounded flex items-center justify-center ${selectedPlaylists.includes(pl.id) ? 'bg-green-500 border-green-500' : ''}`}>
-                                           {selectedPlaylists.includes(pl.id) && <div className="w-2 h-2 bg-white rounded-full" />}
-                                       </div>
-                                       <span className="text-sm text-gray-300 truncate">{pl.name}</span>
-                                   </div>
-                               ))}
-                           </div>
-                      </div>
-
-                      <button 
-                        onClick={() => handleSaveMetadata(title, artist, album, genre, year, coverFile, selectedPlaylists)}
-                        className="w-full py-3 bg-green-500 text-black font-bold rounded-full hover:scale-105 transition mt-4"
-                      >
-                          {t('save')}
-                      </button>
-                  </div>
-              </div>
-          </div>
-      );
-  };
-
   const QueueSidebar = () => {
     return (
       <div 
@@ -878,12 +1052,8 @@ const App: React.FC = () => {
             {currentSongMeta ? (
                  <div className="bg-[#282828] p-3 rounded-lg flex items-center gap-3 mb-6 border border-green-500/30">
                      <div className="w-10 h-10 rounded bg-gray-800 flex-shrink-0 relative">
-                        {currentSongCoverUrl ? (
-                            <img src={currentSongCoverUrl} className="w-full h-full object-cover rounded" />
-                        ) : (
-                            <div className="w-full h-full rounded" style={{ background: generateCover(currentSongMeta.title) }}></div>
-                        )}
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded">
+                        <SongArt song={currentSongMeta} className="w-full h-full rounded absolute inset-0" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded z-10">
                            <BarChart2 size={16} className="text-green-500" />
                         </div>
                      </div>
@@ -917,11 +1087,7 @@ const App: React.FC = () => {
                     >
                         <GripVertical size={16} className="text-gray-600 group-hover:text-gray-400" />
                         <div className="w-10 h-10 rounded bg-gray-800 flex-shrink-0 relative overflow-hidden">
-                             {song.hasCover ? (
-                                <div className="w-full h-full bg-cover" style={{ backgroundImage: `url(${generateCover(song.title)})` }}></div>
-                             ) : (
-                                <div className="w-full h-full" style={{ background: generateCover(song.title) }}></div>
-                             )}
+                             <SongArt song={song} className="w-full h-full" />
                         </div>
                         <div className="flex-1 overflow-hidden">
                             <div className="text-white font-medium truncate">{song.title}</div>
@@ -1138,12 +1304,8 @@ const App: React.FC = () => {
             onClick={() => setIsNowPlayingOpen(true)}
         >
             <div className="flex items-center gap-3 flex-1 overflow-hidden">
-                 <div className="w-10 h-10 rounded bg-gray-800 flex-shrink-0 relative">
-                    {currentSongCoverUrl ? (
-                        <img src={currentSongCoverUrl} className="w-full h-full object-cover rounded" />
-                    ) : (
-                        <div className="w-full h-full rounded" style={{ background: generateCover(currentSongMeta.title) }}></div>
-                    )}
+                 <div className="w-10 h-10 rounded bg-gray-800 flex-shrink-0 relative overflow-hidden">
+                     <SongArt song={currentSongMeta} className="w-full h-full" />
                  </div>
                  <div className="flex flex-col overflow-hidden">
                      <span className="text-white text-sm font-bold truncate">{currentSongMeta.title}</span>
@@ -1175,11 +1337,7 @@ const App: React.FC = () => {
              {currentSongMeta ? (
                  <>
                     <div className="w-14 h-14 bg-gray-800 rounded shadow-md flex-shrink-0 relative overflow-hidden group">
-                        {currentSongCoverUrl ? (
-                            <img src={currentSongCoverUrl} className="w-full h-full object-cover" alt="Cover" />
-                        ) : (
-                            <div className="w-full h-full" style={{ background: generateCover(currentSongMeta.title) }}></div>
-                        )}
+                        <SongArt song={currentSongMeta} className="w-full h-full" />
                         <button className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition" onClick={() => setIsNowPlayingOpen(!isNowPlayingOpen)}>
                              <ChevronDown size={20} className="text-white rotate-180"/>
                         </button>
@@ -1293,8 +1451,32 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-screen bg-black text-gray-300 flex flex-col font-sans select-none overflow-hidden">
       
-      {editingSong && <EditModal song={editingSong} onClose={() => setEditingSong(null)} />}
-      <AddToPlaylistModal />
+      {editingSong && <EditModal 
+          song={editingSong} 
+          onClose={() => setEditingSong(null)} 
+          playlists={playlists}
+          onSave={handleSaveMetadata}
+          t={t}
+      />}
+      
+      {editingAlbumName && (
+          <EditAlbumModal 
+             albumName={editingAlbumName}
+             songs={songs}
+             onClose={() => setEditingAlbumName(null)}
+             onSave={handleSaveAlbumDetails}
+             t={t}
+          />
+      )}
+
+      <AddToPlaylistModal 
+          song={songToAddToPlaylist} 
+          onClose={() => setSongToAddToPlaylist(null)} 
+          playlists={playlists}
+          onAdd={handleQuickAddToPlaylist}
+          t={t}
+      />
+      
       <NowPlayingFullView />
       <QueueSidebar />
 
@@ -1431,8 +1613,7 @@ const App: React.FC = () => {
            {/* Top Bar */}
            <div className="sticky top-0 bg-[#121212]/95 backdrop-blur-sm z-20 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex gap-2 items-center">
-                 <button className="bg-black/50 p-1 rounded-full md:block hidden"><SkipBack size={20} className="rotate-180" /></button> 
-                 <button className="bg-black/50 p-1 rounded-full md:block hidden"><SkipForward size={20} /></button>
+                 {/* Removed top bar navigation buttons as requested */}
                  {/* Mobile Logo for Top Bar */}
                  <div className="md:hidden flex items-center gap-2">
                     <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-700 rounded-full flex items-center justify-center">
@@ -1532,15 +1713,31 @@ const App: React.FC = () => {
                           </div>
                       </div>
                       
+                      {/* Albums Section on Home */}
+                      <div className="mb-8">
+                         <h3 className="text-xl md:text-2xl font-bold text-white mb-4">{t('albums')}</h3>
+                         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4 md:gap-6">
+                            {uniqueAlbums.slice(0, 10).map(({ name, artist, song }) => (
+                                <div key={name} className="bg-[#181818] p-3 md:p-4 rounded-lg hover:bg-[#282828] transition cursor-pointer group relative" onClick={() => goToAlbum(name)}>
+                                    <div className="w-full aspect-square mb-3 md:mb-4 shadow-lg rounded-md overflow-hidden relative">
+                                        <SongArt song={song} className="w-full h-full" />
+                                    </div>
+                                    <h4 className="font-bold text-white truncate text-sm md:text-base">{name}</h4>
+                                    <p className="text-xs md:text-sm text-gray-400 truncate">{artist}</p>
+                                </div>
+                            ))}
+                         </div>
+                      </div>
+
                       <div className="mt-8">
                          <h3 className="text-xl md:text-2xl font-bold text-white mb-4">{t('yourImports')}</h3>
                          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4 md:gap-6">
                             {songs.slice(0, 10).map(song => (
                                 <div key={song.id} className="bg-[#181818] p-3 md:p-4 rounded-lg hover:bg-[#282828] transition cursor-pointer group relative">
                                     <div className="w-full aspect-square mb-3 md:mb-4 shadow-lg rounded-md overflow-hidden relative" onClick={() => playSong(song.id)}>
-                                        <div className="w-full h-full" style={{ background: generateCover(song.title) }}>
+                                        <SongArt song={song} className="w-full h-full">
                                             {song.hasCover ? <span className="absolute bottom-1 right-1 text-[10px] bg-black/50 px-1 rounded">{t('hasCover')}</span> : null}
-                                        </div>
+                                        </SongArt>
                                         <div className="absolute bottom-2 right-2 bg-green-500 rounded-full p-3 shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all hidden md:block">
                                             <Play className="fill-black text-black ml-0.5" size={20} />
                                         </div>
@@ -1581,8 +1778,12 @@ const App: React.FC = () => {
                                     </div>
                                 )}
                                 {(currentView === 'ARTIST' || currentView === 'ALBUM') && (
-                                    <div className="w-40 h-40 md:w-52 md:h-52 bg-gradient-to-b from-gray-700 to-black flex items-center justify-center rounded shadow-lg">
-                                        {currentView === 'ARTIST' ? <MonitorPlay size={64} className="text-gray-400" /> : <Disc size={64} className="text-gray-400" />}
+                                    <div className="w-40 h-40 md:w-52 md:h-52 bg-gradient-to-b from-gray-700 to-black flex items-center justify-center rounded shadow-lg overflow-hidden relative">
+                                        {currentView === 'ALBUM' && filteredSongs.length > 0 ? (
+                                            <SongArt song={filteredSongs[0]} className="w-full h-full" />
+                                        ) : (
+                                            currentView === 'ARTIST' ? <MonitorPlay size={64} className="text-gray-400" /> : <Disc size={64} className="text-gray-400" />
+                                        )}
                                     </div>
                                 )}
                              </div>
@@ -1624,13 +1825,22 @@ const App: React.FC = () => {
                                                 currentView === 'ALBUM' ? selectedAlbum :
                                                 t('library')}
                                             </h2>
-                                            {(currentView === 'ARTIST' || currentView === 'ALBUM') && (
+                                            {currentView === 'ARTIST' && (
                                                 <button 
                                                     onClick={() => { 
                                                         setIsEditingHeader(true); 
-                                                        setEditHeaderValue(currentView === 'ARTIST' ? selectedArtist || '' : selectedAlbum || ''); 
+                                                        setEditHeaderValue(selectedArtist || ''); 
                                                     }}
                                                     className="opacity-0 group-hover:opacity-100 transition text-gray-400 hover:text-white"
+                                                >
+                                                    <Edit2 size={24} />
+                                                </button>
+                                            )}
+                                            {currentView === 'ALBUM' && (
+                                                <button 
+                                                    onClick={() => setEditingAlbumName(selectedAlbum)}
+                                                    className="opacity-0 group-hover:opacity-100 transition text-gray-400 hover:text-white"
+                                                    title={t('editAlbumDetails')}
                                                 >
                                                     <Edit2 size={24} />
                                                 </button>
@@ -1640,10 +1850,30 @@ const App: React.FC = () => {
                                  </div>
                                  <p className="text-gray-400 mt-2 font-medium">
                                      {filteredSongs.length} {t('songsInPlaylist')}
+                                     {currentView === 'ALBUM' && filteredSongs.length > 0 && filteredSongs[0].year ? ` • ${filteredSongs[0].year}` : ''}
                                  </p>
                              </div>
                         </div>
                       </div>
+
+                      {/* Render Albums Grid in Library View if not filtering by specifics */}
+                      {currentView === 'LIBRARY' && !searchQuery && !filterGenre && !filterYear && !filterFormat && (
+                          <div className="mb-8">
+                                <h3 className="text-lg font-bold text-gray-400 uppercase tracking-widest mb-4 border-b border-gray-800 pb-2">{t('albums')}</h3>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                                    {uniqueAlbums.map(({ name, artist, song }) => (
+                                        <div key={name} className="bg-[#181818] p-3 rounded-lg hover:bg-[#282828] transition cursor-pointer group" onClick={() => goToAlbum(name)}>
+                                            <div className="w-full aspect-square mb-2 shadow-lg rounded-md overflow-hidden relative">
+                                                <SongArt song={song} className="w-full h-full" />
+                                            </div>
+                                            <h4 className="font-bold text-white truncate text-sm">{name}</h4>
+                                            <p className="text-xs text-gray-400 truncate">{artist}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                                <h3 className="text-lg font-bold text-gray-400 uppercase tracking-widest mt-8 mb-4 border-b border-gray-800 pb-2">{t('songs')}</h3>
+                          </div>
+                      )}
 
                       <div className="w-full">
                           {/* Desktop Header Row */}
@@ -1675,11 +1905,7 @@ const App: React.FC = () => {
                                   {/* Mobile/Desktop Content */}
                                   <div className="flex items-center gap-3 overflow-hidden">
                                       <div className="w-10 h-10 flex-shrink-0 bg-gray-700 rounded relative group/img overflow-hidden">
-                                          {song.hasCover ? (
-                                              <div className="w-full h-full bg-cover" style={{ backgroundImage: `url(${generateCover(song.title)})` }}></div>
-                                          ) : (
-                                              <div className="w-full h-full" style={{ background: generateCover(song.title) }}></div>
-                                          )}
+                                          <SongArt song={song} className="w-full h-full" />
                                       </div>
                                       <div className="flex flex-col truncate">
                                           <span className={`font-medium truncate ${currentSongId === song.id ? 'text-green-500' : 'text-white'}`}>{song.title}</span>

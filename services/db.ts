@@ -52,6 +52,20 @@ export const getSongBlob = async (id: string): Promise<Blob | undefined> => {
   });
 };
 
+export const getSongCover = async (id: string): Promise<Blob | undefined | null> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(['songs'], 'readonly');
+    const store = transaction.objectStore('songs');
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const song = request.result as Song;
+      resolve(song?.coverBlob);
+    };
+    request.onerror = () => reject();
+  });
+};
+
 export const getAllSongsMetadata = async (): Promise<SongMetadata[]> => {
   const db = await initDB();
   return new Promise((resolve, reject) => {
