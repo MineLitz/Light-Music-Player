@@ -22,7 +22,7 @@ const TRANSLATIONS = {
     search: 'Search',
     library: 'Library',
     settings: 'Settings',
-    welcome: 'Good morning',
+    welcome: 'Welcome',
     likedSongs: 'Liked Songs',
     yourImports: 'Your Imports',
     searchResults: 'Search Results',
@@ -71,10 +71,6 @@ const TRANSLATIONS = {
     bgModeCover: 'Song Cover (Blurred)',
     bgModeCustom: 'Custom GIF/Image',
     devicesAvailable: 'Devices Available',
-    discordRpc: 'Discord Rich Presence',
-    discordRpcDesc: 'Show what you are listening to on your Discord profile.',
-    discordRpcEnabled: 'Activity Enabled',
-    discordRpcDisabled: 'Activity Disabled',
     offlineMode: 'Offline Mode',
     offlineModeDesc: 'Prevent the app from attempting to fetch external data.',
     offlineEnabled: 'Offline',
@@ -90,13 +86,14 @@ const TRANSLATIONS = {
     allYears: 'All Years',
     allFormats: 'All Formats',
     previewAlbum: 'Preview Info',
+    playingFrom: 'Playing from',
   },
   pt: {
     home: 'Início',
     search: 'Buscar',
     library: 'Biblioteca',
     settings: 'Configurações',
-    welcome: 'Bom dia',
+    welcome: 'Bem-vindo',
     likedSongs: 'Músicas Curtidas',
     yourImports: 'Suas Importações',
     searchResults: 'Resultados da Busca',
@@ -145,10 +142,6 @@ const TRANSLATIONS = {
     bgModeCover: 'Capa da Música (Desfocada)',
     bgModeCustom: 'GIF/Imagem Personalizada',
     devicesAvailable: 'Dispositivos Disponíveis',
-    discordRpc: 'Discord Rich Presence',
-    discordRpcDesc: 'Mostre o que você está ouvindo no seu perfil do Discord.',
-    discordRpcEnabled: 'Atividade Ativada',
-    discordRpcDisabled: 'Atividade Desativada',
     offlineMode: 'Modo Offline',
     offlineModeDesc: 'Impede o aplicativo de tentar buscar dados externos.',
     offlineEnabled: 'Offline',
@@ -164,6 +157,7 @@ const TRANSLATIONS = {
     allYears: 'Todos os Anos',
     allFormats: 'Todos os Formatos',
     previewAlbum: 'Ver Info',
+    playingFrom: 'Tocando de',
   }
 };
 
@@ -221,7 +215,6 @@ const App: React.FC = () => {
   const [currentSongCoverUrl, setCurrentSongCoverUrl] = useState<string | null>(null);
 
   // Settings State
-  const [discordRpcEnabled, setDiscordRpcEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
 
   // UI State
@@ -337,11 +330,6 @@ const App: React.FC = () => {
         } catch(e) { console.error("Error loading preferences", e); }
     }
 
-    const savedRpc = localStorage.getItem('lmp_discord_rpc');
-    if (savedRpc !== null) {
-        setDiscordRpcEnabled(savedRpc === 'true');
-    }
-
     const savedOffline = localStorage.getItem('lmp_offline_mode');
     if (savedOffline !== null) {
         setOfflineMode(savedOffline === 'true');
@@ -399,7 +387,6 @@ const App: React.FC = () => {
               ]
           });
 
-          // Play/Pause handlers rely on state closure; wrapping them or using ref is safer but effect re-runs on isPlaying
           navigator.mediaSession.setActionHandler('play', () => {
               audioEngine.togglePlay();
               setIsPlaying(true);
@@ -409,10 +396,7 @@ const App: React.FC = () => {
               setIsPlaying(false);
           });
           
-          // These need access to the latest 'queue' and 'isShuffle', so they are dependent on them
-          // We define them here to ensure they use current scope
           navigator.mediaSession.setActionHandler('previoustrack', () => {
-             // Logic from handlePrev
              if (queue.length === 0) return;
              if (audioEngine.getElement().currentTime > 3) {
                 audioEngine.seek(0);
@@ -420,15 +404,10 @@ const App: React.FC = () => {
              }
              const currentIdx = queue.indexOf(currentSongId || '');
              const prevIndex = currentIdx - 1;
-             if (prevIndex >= 0) {
-                 // Trigger play logic - slightly complex since playSong is async/in-component
-                 // For now, we manually find the ID and play.
-                 // Ideally this should call handlePrev directly if it was stable
-                 // We will just invoke the function from scope if we can ensure it's up to date
-             }
+             // Play logic handled via UI buttons primarily, this is fallback
           });
           navigator.mediaSession.setActionHandler('nexttrack', () => {
-             // Logic from handleNext
+             // Logic
           });
           
           navigator.mediaSession.setActionHandler('seekto', (details) => {
@@ -440,42 +419,12 @@ const App: React.FC = () => {
       }
   }, [currentSongMeta, currentSongCoverUrl]);
 
-  // Separate effect for handlers that need fresh state (Queue/Shuffle)
   useEffect(() => {
       if ('mediaSession' in navigator) {
           navigator.mediaSession.setActionHandler('previoustrack', handlePrev);
           navigator.mediaSession.setActionHandler('nexttrack', handleNext);
       }
-  }, [queue, isShuffle, isRepeat, currentSongId]); // Dependencies for navigation logic
-
-
-  // Discord RPC Logic
-  useEffect(() => {
-    if (!discordRpcEnabled || offlineMode) return;
-    
-    if (currentSongMeta) {
-        const payload: any = {
-            details: currentSongMeta.title,
-            state: `${currentSongMeta.artist} • ${currentSongMeta.album}`,
-            largeImageKey: 'light_music_logo',
-            largeImageText: 'Light Music Player',
-            smallImageKey: isPlaying ? 'play_icon' : 'pause_icon',
-            smallImageText: isPlaying ? 'Playing' : 'Paused',
-            instance: false,
-        };
-
-        if (isPlaying) {
-            const startTimestamp = Math.floor(Date.now() / 1000);
-            const endTimestamp = startTimestamp + (duration - currentTime);
-            payload.startTimestamp = startTimestamp;
-            payload.endTimestamp = Math.floor(endTimestamp);
-        }
-
-        console.log('[Discord RPC] Updating Presence:', payload);
-    } else {
-        console.log('[Discord RPC] Clearing Presence');
-    }
-  }, [currentSongMeta, isPlaying, discordRpcEnabled, offlineMode]);
+  }, [queue, isShuffle, isRepeat, currentSongId]);
 
   // --- Handlers --- //
 
@@ -759,19 +708,10 @@ const App: React.FC = () => {
     return `linear-gradient(to right, #1db954 ${percentage}%, #4b5563 ${percentage}%)`;
   };
 
-  const toggleDiscordRpc = () => {
-      const newState = !discordRpcEnabled;
-      setDiscordRpcEnabled(newState);
-      localStorage.setItem('lmp_discord_rpc', String(newState));
-  };
-
   const toggleOfflineMode = () => {
       const newState = !offlineMode;
       setOfflineMode(newState);
       localStorage.setItem('lmp_offline_mode', String(newState));
-      if (newState) {
-          console.log('[Discord RPC] Offline Mode enabled. Presence cleared.');
-      }
   };
 
   // Drag and Drop Logic for Queue
@@ -804,7 +744,7 @@ const App: React.FC = () => {
   const AddToPlaylistModal = () => {
       if (!songToAddToPlaylist) return null;
       return (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
              <div className="bg-[#282828] rounded-xl p-6 w-full max-w-sm shadow-2xl border border-white/10">
                 <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-bold text-white">{t('selectPlaylist')}</h3>
@@ -846,7 +786,7 @@ const App: React.FC = () => {
       };
 
       return (
-          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-[#282828] rounded-xl p-6 w-full max-w-md shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
                   <div className="flex justify-between items-center mb-6">
                       <h3 className="text-xl font-bold text-white">{t('editInfo')}</h3>
@@ -1009,91 +949,157 @@ const App: React.FC = () => {
   const NowPlayingFullView = () => {
     if (!currentSongMeta) return null;
 
-    // Simulate "11 days ago • 16 songs..." description from existing metadata
-    const description = [
-        currentSongMeta.year ? `${currentSongMeta.year}` : null,
-        currentSongMeta.duration ? formatTime(currentSongMeta.duration) : null,
-        currentSongMeta.genre,
-        currentSongMeta.format
-    ].filter(Boolean).join(' • ');
+    // Background handling logic
+    let containerStyle: React.CSSProperties = {
+        backgroundColor: '#000',
+    };
 
-    const titleList = [currentSongMeta.title, "Up Next", "More Songs", "Suggested"].join(' • ');
+    if (nowPlayingBgMode === 'custom' && nowPlayingBg) {
+        containerStyle = {
+            backgroundImage: `url(${nowPlayingBg})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+        };
+    } else {
+        // Use cover as background if available, otherwise dark gradient
+        if (currentSongCoverUrl) {
+            containerStyle = {
+                backgroundImage: `url(${currentSongCoverUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+            };
+        } else {
+             containerStyle = {
+                 background: generateCover(currentSongMeta.title)
+             };
+        }
+    }
 
     return (
       <div 
-        className={`fixed inset-0 z-[60] flex items-center justify-center p-4 transition-all duration-300 ${isNowPlayingOpen ? 'opacity-100 pointer-events-auto bg-black/80 backdrop-blur-sm' : 'opacity-0 pointer-events-none'}`}
-        onClick={() => setIsNowPlayingOpen(false)}
+        className={`fixed inset-0 z-[60] flex flex-col transition-all duration-300 ${isNowPlayingOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+        style={containerStyle}
       >
-         {/* Card Container matching the reference photo */}
-         <div 
-            className="w-full max-w-2xl bg-[#6d4127] rounded-3xl overflow-hidden shadow-2xl relative flex flex-col md:flex-row transition-transform scale-100 hover:scale-[1.01] duration-300"
-            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking card
-            style={{
-                // Fallback color if no cover, but try to use a brown/warm tone like the photo
-                background: 'linear-gradient(135deg, #8B4513 0%, #5D3318 100%)',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
-            }}
-         >
-            {/* Top/Left Image Section */}
-            <div className="md:w-1/2 p-6 flex flex-col relative">
-                 <div className="aspect-square w-full rounded-lg shadow-xl overflow-hidden relative group bg-black/20">
+        {/* Dark Overlay to ensure text readability over any background */}
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-0" />
+
+        {/* Content */}
+        <div className="relative z-10 flex flex-col h-full w-full max-w-2xl mx-auto p-6 md:p-12">
+            
+            {/* Header: Context + Close */}
+            <div className="flex justify-between items-center mb-8">
+                <div className="flex items-center gap-2 text-white">
+                    <ChevronDown size={20} className="text-transparent" /> {/* Spacer */}
+                    <span className="text-sm font-bold uppercase tracking-wider text-gray-300">
+                        {currentSongMeta.album || t('nowPlaying')}
+                    </span>
+                </div>
+                <button 
+                    onClick={() => setIsNowPlayingOpen(false)}
+                    className="text-gray-300 hover:text-white p-2 rounded-full hover:bg-white/10 transition"
+                >
+                    <X size={24} />
+                </button>
+            </div>
+
+            {/* Artwork Area - Flexible spacer above/below to center it */}
+            <div className="flex-1 flex items-center justify-center min-h-0 py-4">
+                <div className="relative w-full aspect-square max-h-full shadow-2xl rounded-lg overflow-hidden bg-[#282828]">
                     {currentSongCoverUrl ? (
                         <img src={currentSongCoverUrl} className="w-full h-full object-cover" />
                     ) : (
                         <div className="w-full h-full" style={{ background: generateCover(currentSongMeta.title) }}></div>
                     )}
-                    {/* Hover Play Overlay */}
-                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                        <button onClick={() => audioEngine.togglePlay()} className="transform hover:scale-110 transition">
-                            {isPlaying ? <Pause size={48} className="text-white fill-white"/> : <Play size={48} className="text-white fill-white"/>}
-                        </button>
-                    </div>
-                 </div>
+                </div>
             </div>
 
-            {/* Content Section */}
-            <div className="md:w-1/2 p-6 flex flex-col text-[#FFE4D6]"> {/* Light warm text color */}
-                 <div className="flex justify-between items-start mb-2">
-                     <span className="font-medium text-sm opacity-80 uppercase tracking-wide">{currentSongMeta.album || t('nowPlaying')}</span>
-                     <button className="text-[#FFE4D6] hover:text-white" onClick={() => setIsNowPlayingOpen(false)}>
-                         <MoreHorizontal size={24} />
+            {/* Info + Controls Area */}
+            <div className="flex flex-col gap-6 mt-6 pb-safe">
+                
+                {/* Titles */}
+                <div className="flex justify-between items-end">
+                    <div className="flex flex-col gap-1 overflow-hidden pr-4">
+                        <h1 className="text-2xl md:text-4xl font-bold text-white truncate leading-tight">
+                            {currentSongMeta.title}
+                        </h1>
+                        <p 
+                            className="text-lg text-gray-400 truncate cursor-pointer hover:underline hover:text-gray-300"
+                            onClick={() => { setIsNowPlayingOpen(false); goToArtist(currentSongMeta.artist); }}
+                        >
+                            {currentSongMeta.artist}
+                        </p>
+                    </div>
+                     <button 
+                        onClick={() => handleToggleLike(currentSongMeta.id)} 
+                        className={`transition hover:scale-110 p-2 ${isCurrentLiked ? "text-green-500" : "text-gray-400 hover:text-white"}`}
+                    >
+                        <Heart size={28} className={isCurrentLiked ? "fill-green-500" : ""} />
+                    </button>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="flex flex-col gap-2 group">
+                     <input 
+                      type="range" 
+                      min="0" 
+                      max={duration || 100} 
+                      value={currentTime} 
+                      onChange={handleSeek}
+                      className="w-full h-1 bg-gray-600 rounded-full appearance-none cursor-pointer hover:h-1.5 transition-all outline-none"
+                      style={{
+                          background: getSliderBackground(currentTime, duration)
+                      }}
+                    />
+                    <div className="flex justify-between text-xs text-gray-400 font-medium">
+                        <span>{formatTime(currentTime)}</span>
+                        <span>{formatTime(duration)}</span>
+                    </div>
+                </div>
+
+                {/* Main Controls */}
+                <div className="flex items-center justify-between px-2">
+                     <button 
+                        onClick={() => setIsShuffle(!isShuffle)} 
+                        className={`transition ${isShuffle ? 'text-green-500' : 'text-gray-400 hover:text-white'}`}
+                     >
+                         <Shuffle size={24} />
                      </button>
-                 </div>
-
-                 <div className="flex-1 flex flex-col justify-center mb-6">
-                     <p className="text-sm font-medium mb-3 opacity-90 leading-relaxed">
-                         {description}
-                         <span className="opacity-70 block mt-1 text-xs">
-                             {currentSongMeta.artist} • {titleList}
-                         </span>
-                     </p>
-                     <h1 className="text-3xl font-bold text-white mb-2 leading-tight">{currentSongMeta.title}</h1>
-                 </div>
-
-                 {/* Bottom Controls */}
-                 <div className="mt-auto flex items-center justify-between">
-                     <button className="flex items-center gap-2 bg-[#4A2814]/60 hover:bg-[#4A2814]/80 backdrop-blur px-4 py-2 rounded-full transition text-sm font-bold text-white group">
-                         <CornerDownLeft size={16} className="group-hover:-translate-x-1 transition"/>
-                         {t('previewAlbum')}
-                     </button>
-
-                     <div className="flex items-center gap-4">
-                         <button 
-                            onClick={() => handleToggleLike(currentSongMeta.id)}
-                            className="w-10 h-10 rounded-full border border-[#FFE4D6]/30 flex items-center justify-center hover:bg-white/10 transition text-white"
-                         >
-                            <Plus size={20} className={isCurrentLiked ? "rotate-45 transition-transform" : "transition-transform"}/>
+                     
+                     <div className="flex items-center gap-8">
+                         <button onClick={handlePrev} className="text-white hover:text-gray-300 transition hover:scale-105">
+                             <SkipBack size={36} className="fill-current" />
                          </button>
                          <button 
-                            onClick={() => audioEngine.togglePlay()}
-                            className="bg-white text-[#5D3318] rounded-full w-12 h-12 flex items-center justify-center hover:scale-105 transition shadow-lg"
+                            onClick={() => audioEngine.togglePlay()} 
+                            className="bg-white text-black rounded-full p-4 hover:scale-105 transition shadow-lg"
                          >
-                            {isPlaying ? <Pause size={24} className="fill-current"/> : <Play size={24} className="fill-current ml-1"/>}
+                             {isPlaying ? <Pause size={32} className="fill-current" /> : <Play size={32} className="fill-current ml-1" />}
+                         </button>
+                         <button onClick={handleNext} className="text-white hover:text-gray-300 transition hover:scale-105">
+                             <SkipForward size={36} className="fill-current" />
                          </button>
                      </div>
-                 </div>
+
+                     <button 
+                        onClick={() => setIsRepeat(!isRepeat)} 
+                        className={`transition relative ${isRepeat ? 'text-green-500' : 'text-gray-400 hover:text-white'}`}
+                     >
+                         <Repeat size={24} />
+                         {isRepeat && <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-1 h-1 bg-green-500 rounded-full" />}
+                     </button>
+                </div>
+                
+                {/* Bottom Row Actions */}
+                <div className="flex justify-between items-center px-4 mt-2">
+                    <button className="text-gray-400 hover:text-white transition">
+                        <Share2 size={20} />
+                    </button>
+                    <button onClick={() => setIsQueueOpen(true)} className="text-gray-400 hover:text-white transition flex items-center gap-2">
+                        <ListOrdered size={20} />
+                    </button>
+                </div>
             </div>
-         </div>
+        </div>
       </div>
     );
   };
@@ -1332,7 +1338,7 @@ const App: React.FC = () => {
 
              {/* Playlist Creation Input */}
              {isCreatingPlaylist && (
-                 <div className="mb-4 bg-[#282828] p-2 rounded animate-fade-in">
+                 <div className="mb-4 bg-[#282828] p-2 rounded">
                      <input 
                         type="text" 
                         placeholder={t('newPlaylistName')}
@@ -1501,7 +1507,7 @@ const App: React.FC = () => {
            </div>
 
            {/* Mobile View Padding for Bottom Nav */}
-           <div className="p-4 md:p-6 pb-32 md:pb-24 animate-fade-in">
+           <div className="p-4 md:p-6 pb-32 md:pb-24">
               {currentView === 'HOME' && (
                   <div>
                       <div className="hidden md:flex items-center gap-4 mb-6">
@@ -1561,7 +1567,7 @@ const App: React.FC = () => {
 
               {(currentView === 'LIBRARY' || currentView === 'SEARCH' || currentView === 'LIKED' || currentView === 'PLAYLIST' || currentView === 'ARTIST' || currentView === 'ALBUM') && (
                   <div>
-                      <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 animate-slide-in-right gap-4">
+                      <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 gap-4">
                         <div className="flex flex-col md:flex-row md:items-end gap-6">
                              <div className="self-center md:self-auto shadow-2xl">
                                 {currentView === 'LIKED' && (
@@ -1726,7 +1732,7 @@ const App: React.FC = () => {
               )}
 
               {currentView === 'SETTINGS' && (
-                  <div className="max-w-4xl mx-auto animate-fade-in">
+                  <div className="max-w-4xl mx-auto">
                       <h2 className="text-2xl font-bold text-white mb-6">{t('settings')}</h2>
                       
                       {/* Library Statistics */}
@@ -1764,27 +1770,6 @@ const App: React.FC = () => {
                                 className={`w-12 h-6 rounded-full relative transition-colors ${offlineMode ? 'bg-red-500' : 'bg-green-500'}`}
                               >
                                   <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${offlineMode ? 'left-7' : 'left-1'}`}></div>
-                              </button>
-                          </div>
-                      </div>
-
-                      {/* Discord Integration Settings */}
-                      <div className={`bg-[#181818] p-6 rounded-lg mb-6 transition-opacity ${offlineMode ? 'opacity-50 pointer-events-none' : ''}`}>
-                          <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                             <Gamepad2 size={20} className="text-[#5865F2]"/> 
-                             {t('discordRpc')}
-                          </h3>
-                          <p className="text-gray-400 text-sm mb-4">{t('discordRpcDesc')}</p>
-                          
-                          <div className="flex items-center justify-between bg-black/30 p-4 rounded-lg">
-                              <span className="font-bold text-white">
-                                  {discordRpcEnabled ? t('discordRpcEnabled') : t('discordRpcDisabled')}
-                              </span>
-                              <button 
-                                onClick={toggleDiscordRpc}
-                                className={`w-12 h-6 rounded-full relative transition-colors ${discordRpcEnabled ? 'bg-green-500' : 'bg-gray-600'}`}
-                              >
-                                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${discordRpcEnabled ? 'left-7' : 'left-1'}`}></div>
                               </button>
                           </div>
                       </div>

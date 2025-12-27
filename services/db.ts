@@ -91,13 +91,14 @@ export const updateSongMetadata = async (id: string, updates: Partial<Song>): Pr
       if (song) {
         // Merge updates
         const updatedSong = { ...song, ...updates };
-        store.put(updatedSong);
-        resolve();
+        const putRequest = store.put(updatedSong);
+        putRequest.onsuccess = () => resolve();
+        putRequest.onerror = () => reject("Failed to update song");
       } else {
         reject('Song not found');
       }
     };
-    getRequest.onerror = () => reject();
+    getRequest.onerror = () => reject("Error fetching song");
   });
 };
 
@@ -157,8 +158,9 @@ export const updatePlaylist = async (id: string, updates: Partial<Playlist>): Pr
       const playlist = getRequest.result as Playlist;
       if (playlist) {
         const updated = { ...playlist, ...updates };
-        store.put(updated);
-        resolve();
+        const putRequest = store.put(updated);
+        putRequest.onsuccess = () => resolve();
+        putRequest.onerror = () => reject("Failed to update playlist");
       } else {
         reject('Playlist not found');
       }
