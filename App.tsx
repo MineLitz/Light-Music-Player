@@ -1109,15 +1109,28 @@ const App: React.FC = () => {
     ) => {
       if (!editingSong) return;
       const updates: Partial<Song> = { title, artist, album, genre, year, playlistIds: selectedPlaylists };
-      if (coverFile) updates.coverBlob = coverFile;
+      
+      // Optimistic UI Update: Update the local list immediately to prevent flickering
+      setSongs(prev => prev.map(s => {
+          if (s.id === editingSong.id) {
+              return { ...s, ...updates, hasCover: coverFile ? true : s.hasCover };
+          }
+          return s;
+      }));
 
+      // Persist updates to DB
+      if (coverFile) updates.coverBlob = coverFile;
       await updateSongMetadata(editingSong.id, updates);
       
+      // If editing current song, update cover immediately if changed
       if (currentSongId === editingSong.id && coverFile) {
           if (currentSongCoverUrl) URL.revokeObjectURL(currentSongCoverUrl);
           setCurrentSongCoverUrl(URL.createObjectURL(coverFile));
       }
+      
       setEditingSong(null);
+      
+      // Background reload to ensure consistency
       loadLibrary();
   };
 
@@ -1392,6 +1405,16 @@ const App: React.FC = () => {
                     <button className="text-gray-400 hover:text-white transition">
                         <Share2 size={20} />
                     </button>
+                    
+                    {/* New Edit Button for Current Song */}
+                    <button 
+                        onClick={() => setEditingSong(currentSongMeta)} 
+                        className="text-gray-400 hover:text-white transition"
+                        title={t('editInfo')}
+                    >
+                        <Edit2 size={20} />
+                    </button>
+
                     <button onClick={() => setIsQueueOpen(true)} className="text-gray-400 hover:text-white transition flex items-center gap-2">
                         <ListOrdered size={20} />
                     </button>
