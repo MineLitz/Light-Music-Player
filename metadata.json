@@ -1,0 +1,5 @@
+{
+  "name": "Light Music Player",
+  "description": "An ultra-lightweight, Spotify-inspired music player optimized for performance. Features local library management, 6-band equalizer, and custom playlists using IndexedDB.",
+  "requestFramePermissions": []
+}

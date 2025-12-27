@@ -1,0 +1,46 @@
+{
+  "name": "light-music-player",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"vite\" \"electron .\"",
+    "electron:build": "vite build && electron-builder",
+    "mobile:build": "vite build && npx cap sync android"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "lucide-react": "^0.344.0",
+    "@capacitor/core": "^5.7.0",
+    "@capacitor/android": "^5.7.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.1.4",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "@capacitor/cli": "^5.7.0",
+    "typescript": "^5.3.3",
+    "concurrently": "^8.2.2",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19"
+  },
+  "build": {
+    "appId": "com.lightmusicplayer.app",
+    "productName": "Light Music Player",
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico"
+    }
+  }
+}
