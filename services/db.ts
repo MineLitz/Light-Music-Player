@@ -120,6 +120,17 @@ export const updateSongCover = async (id: string, coverBlob: Blob): Promise<void
     return updateSongMetadata(id, { coverBlob });
 };
 
+export const deleteSongFromDB = async (id: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(['songs'], 'readwrite');
+    const store = transaction.objectStore('songs');
+    const request = store.delete(id);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject();
+  });
+};
+
 export const getSongWithCover = async (id: string): Promise<Song | undefined> => {
   const db = await initDB();
   return new Promise((resolve, reject) => {

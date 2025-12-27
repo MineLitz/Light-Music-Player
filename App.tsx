@@ -9,7 +9,7 @@ import {
 import { Song, SongMetadata, Playlist, View, User, EQSettings, Language } from './types';
 import { 
   initDB, addSongToDB, getAllSongsMetadata, getSongWithCover, updateSongMetadata, 
-  createPlaylistDB, getAllPlaylistsDB, updatePlaylist, deletePlaylist, getSongCover
+  createPlaylistDB, getAllPlaylistsDB, updatePlaylist, deletePlaylist, getSongCover, deleteSongFromDB
 } from './services/db';
 import { audioEngine } from './services/audioEngine';
 import Equalizer from './components/Equalizer';
@@ -89,6 +89,10 @@ const TRANSLATIONS = {
     playingFrom: 'Playing from',
     albums: 'Albums',
     editAlbumDetails: 'Edit Album Details',
+    deleteSong: 'Delete Song',
+    deleteAlbum: 'Delete Album',
+    confirmDeleteSong: 'Are you sure you want to delete this song?',
+    confirmDeleteAlbum: 'Are you sure you want to delete this album? This will remove all songs in it.',
   },
   pt: {
     home: 'Início',
@@ -162,6 +166,10 @@ const TRANSLATIONS = {
     playingFrom: 'Tocando de',
     albums: 'Álbuns',
     editAlbumDetails: 'Editar Detalhes do Álbum',
+    deleteSong: 'Excluir Música',
+    deleteAlbum: 'Excluir Álbum',
+    confirmDeleteSong: 'Tem certeza que deseja excluir esta música?',
+    confirmDeleteAlbum: 'Tem certeza que deseja excluir este álbum? Isso removerá todas as músicas dele.',
   }
 };
 
@@ -183,6 +191,107 @@ const formatTime = (seconds: number) => {
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
+
+// --- PERFORMANCE OPTIMIZATION: Audio Progress Components --- //
+// These components use useRef and direct DOM manipulation to avoid 
+// re-rendering the entire App component on every audio frame.
+
+const AudioProgressBar: React.FC<{ className?: string }> = ({ className }) => {
+    const inputRef = useRef<HTMLInputElement>(null);
+    const timeRef = useRef<HTMLSpanElement>(null);
+    const durationRef = useRef<HTMLSpanElement>(null);
+    const rafRef = useRef<number | null>(null);
+
+    const update = useCallback(() => {
+        const el = audioEngine.getElement();
+        const curr = el.currentTime;
+        const dur = el.duration || 0;
+
+        // Update Input Slider
+        if (inputRef.current) {
+            // Only update value if user isn't dragging (optional refinement, but usually fine)
+            inputRef.current.max = dur.toString();
+            inputRef.current.value = curr.toString();
+            
+            const percentage = dur > 0 ? (curr / dur) * 100 : 0;
+            inputRef.current.style.background = `linear-gradient(to right, #1db954 ${percentage}%, #4b5563 ${percentage}%)`;
+        }
+
+        // Update Text
+        if (timeRef.current) timeRef.current.textContent = formatTime(curr);
+        if (durationRef.current) durationRef.current.textContent = formatTime(dur);
+
+        rafRef.current = requestAnimationFrame(update);
+    }, []);
+
+    useEffect(() => {
+        // Start Loop
+        rafRef.current = requestAnimationFrame(update);
+        return () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        };
+    }, [update]);
+
+    const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const time = parseFloat(e.target.value);
+        audioEngine.seek(time);
+        // Immediate visual update to feel responsive
+        if (inputRef.current) {
+             const max = parseFloat(inputRef.current.max) || 100;
+             const percentage = (time / max) * 100;
+             inputRef.current.style.background = `linear-gradient(to right, #1db954 ${percentage}%, #4b5563 ${percentage}%)`;
+        }
+    };
+
+    return (
+        <div className={`flex items-center gap-2 text-xs font-mono text-gray-400 w-full ${className}`}>
+            <span ref={timeRef} className="min-w-[40px] text-right">0:00</span>
+            <input 
+                ref={inputRef}
+                type="range" 
+                min="0" 
+                max="100" 
+                defaultValue="0"
+                step="0.1"
+                onChange={handleSeek}
+                className="w-full h-1 bg-[#4b5563] rounded-full appearance-none cursor-pointer hover:h-1.5 transition-all outline-none"
+            />
+            <span ref={durationRef} className="min-w-[40px]">0:00</span>
+        </div>
+    );
+};
+
+const MiniAudioProgressBar: React.FC = () => {
+    const barRef = useRef<HTMLDivElement>(null);
+    const rafRef = useRef<number | null>(null);
+
+    const update = useCallback(() => {
+        const el = audioEngine.getElement();
+        if (barRef.current) {
+            const pct = (el.currentTime / (el.duration || 1)) * 100;
+            barRef.current.style.width = `${pct}%`;
+        }
+        rafRef.current = requestAnimationFrame(update);
+    }, []);
+
+    useEffect(() => {
+        rafRef.current = requestAnimationFrame(update);
+        return () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        };
+    }, [update]);
+
+    return (
+        <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-gray-600 rounded-b-md overflow-hidden">
+            <div 
+                ref={barRef}
+                className="h-full bg-white" 
+                style={{ width: '0%' }}
+            />
+        </div>
+    );
+};
+
 
 // --- Reusable Song Art Component --- //
 
@@ -277,7 +386,8 @@ interface EditModalProps {
     t: (key: keyof typeof TRANSLATIONS.en) => string;
 }
 
-const EditModal: React.FC<EditModalProps> = ({ song, onClose, playlists, onSave, t }) => {
+// Memoized to ensure it doesn't re-render unless its specific props change
+const EditModal: React.FC<EditModalProps> = React.memo(({ song, onClose, playlists, onSave, t }) => {
     const [title, setTitle] = useState(song.title);
     const [artist, setArtist] = useState(song.artist);
     const [album, setAlbum] = useState(song.album);
@@ -383,7 +493,7 @@ const EditModal: React.FC<EditModalProps> = ({ song, onClose, playlists, onSave,
             </div>
         </div>
     );
-};
+});
 
 interface EditAlbumModalProps {
     albumName: string;
@@ -460,8 +570,11 @@ const App: React.FC = () => {
   // Player State
   const [currentSongId, setCurrentSongId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  
+  // REMOVED: currentTime and duration from State to prevent re-renders.
+  // const [currentTime, setCurrentTime] = useState(0); 
+  // const [duration, setDuration] = useState(0);
+  
   const [volume, setVolume] = useState(1);
   const [lastVolume, setLastVolume] = useState(1);
   const [isShuffle, setIsShuffle] = useState(false);
@@ -631,8 +744,9 @@ const App: React.FC = () => {
     loadLibrary();
 
     const el = audioEngine.getElement();
-    const onTimeUpdate = () => setCurrentTime(el.currentTime);
-    const onDurationChange = () => setDuration(el.duration);
+    
+    // REMOVED: onTimeUpdate updating state. 
+    // Now handled by AudioProgressBar via direct DOM manipulation.
     
     // Fix: Use ref to call the latest handleNext, preventing stale closure issues
     const onEnded = () => {
@@ -642,15 +756,11 @@ const App: React.FC = () => {
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
-    el.addEventListener('timeupdate', onTimeUpdate);
-    el.addEventListener('durationchange', onDurationChange);
     el.addEventListener('ended', onEnded);
     el.addEventListener('play', onPlay);
     el.addEventListener('pause', onPause);
 
     return () => {
-      el.removeEventListener('timeupdate', onTimeUpdate);
-      el.removeEventListener('durationchange', onDurationChange);
       el.removeEventListener('ended', onEnded);
       el.removeEventListener('play', onPlay);
       el.removeEventListener('pause', onPause);
@@ -711,7 +821,7 @@ const App: React.FC = () => {
           navigator.mediaSession.setActionHandler('seekto', (details) => {
               if (details.seekTime !== undefined) {
                    audioEngine.seek(details.seekTime);
-                   setCurrentTime(details.seekTime);
+                   // No state to update here anymore, handled by engine mostly
               }
           });
       }
@@ -839,19 +949,13 @@ const App: React.FC = () => {
 
   const handlePrev = () => {
     if (!queue.length) return;
-    if (currentTime > 3) {
+    if (audioEngine.getElement().currentTime > 3) {
       audioEngine.seek(0);
       return;
     }
     const currentIdx = queue.indexOf(currentSongId || '');
     const prevIndex = currentIdx - 1;
     if (prevIndex >= 0) playSong(queue[prevIndex]);
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    setCurrentTime(time);
-    audioEngine.seek(time);
   };
 
   const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -906,6 +1010,48 @@ const App: React.FC = () => {
           }
           await deletePlaylist(id);
           loadLibrary();
+      }
+  };
+
+  const handleDeleteSong = async (id: string) => {
+      if(!window.confirm(t('confirmDeleteSong'))) return;
+      
+      await deleteSongFromDB(id);
+      
+      // Remove from queues/state instantly to update UI
+      setSongs(prev => prev.filter(s => s.id !== id));
+      if (queue.includes(id)) {
+          setQueue(prev => prev.filter(q => q !== id));
+      }
+      if (currentSongId === id) {
+          audioEngine.getElement().pause();
+          setIsPlaying(false);
+          setCurrentSongId(null);
+          setCurrentSongCoverUrl(null);
+      }
+
+      // Clean playlists
+      const affectedPlaylists = playlists.filter(p => p.songIds.includes(id));
+      for(const p of affectedPlaylists) {
+          const newIds = p.songIds.filter(sid => sid !== id);
+          await updatePlaylist(p.id, { songIds: newIds });
+      }
+      
+      await loadLibrary(); 
+  };
+
+  const handleDeleteAlbum = async (albumName: string) => {
+      if (!window.confirm(t('confirmDeleteAlbum'))) return;
+      
+      const songsToDelete = songs.filter(s => s.album === albumName);
+      for (const s of songsToDelete) {
+          await deleteSongFromDB(s.id);
+      }
+      
+      await loadLibrary(); 
+      if (currentView === 'ALBUM' && selectedAlbum === albumName) {
+          setCurrentView('HOME');
+          setSelectedAlbum(null);
       }
   };
 
@@ -1203,23 +1349,9 @@ const App: React.FC = () => {
                     </button>
                 </div>
 
-                {/* Progress Bar */}
+                {/* Progress Bar (Replaced with Optimized Component) */}
                 <div className="flex flex-col gap-2 group">
-                     <input 
-                      type="range" 
-                      min="0" 
-                      max={duration || 100} 
-                      value={currentTime} 
-                      onChange={handleSeek}
-                      className="w-full h-1 bg-gray-600 rounded-full appearance-none cursor-pointer hover:h-1.5 transition-all outline-none"
-                      style={{
-                          background: getSliderBackground(currentTime, duration)
-                      }}
-                    />
-                    <div className="flex justify-between text-xs text-gray-400 font-medium">
-                        <span>{formatTime(currentTime)}</span>
-                        <span>{formatTime(duration)}</span>
-                    </div>
+                     <AudioProgressBar />
                 </div>
 
                 {/* Main Controls */}
@@ -1320,13 +1452,9 @@ const App: React.FC = () => {
                      {isPlaying ? <Pause size={24} className="fill-white text-white" /> : <Play size={24} className="fill-white text-white" />}
                  </button>
             </div>
-            {/* Simple Progress Bar Overlay */}
-            <div className="absolute bottom-0 left-2 right-2 h-[2px] bg-gray-600 rounded-b-md overflow-hidden">
-                <div 
-                    className="h-full bg-white" 
-                    style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
-                />
-            </div>
+            
+            {/* Optimized Mini Progress Bar */}
+            <MiniAudioProgressBar />
         </div>
     );
   };
@@ -1393,21 +1521,8 @@ const App: React.FC = () => {
                 </button>
              </div>
              
-             <div className="w-full flex items-center gap-2 text-xs font-mono text-gray-400">
-                <span className="min-w-[40px] text-right">{formatTime(currentTime)}</span>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max={duration || 100} 
-                  value={currentTime} 
-                  onChange={handleSeek}
-                  className="w-full h-1 bg-[#4b5563] rounded-full appearance-none cursor-pointer hover:h-1.5 transition-all outline-none"
-                  style={{
-                      background: getSliderBackground(currentTime, duration)
-                  }}
-                />
-                <span className="min-w-[40px]">{formatTime(duration)}</span>
-             </div>
+             {/* Optimized Audio Progress Bar */}
+             <AudioProgressBar />
           </div>
 
           <div className="w-[30%] min-w-[180px] flex justify-end items-center gap-2">
@@ -1837,13 +1952,22 @@ const App: React.FC = () => {
                                                 </button>
                                             )}
                                             {currentView === 'ALBUM' && (
-                                                <button 
-                                                    onClick={() => setEditingAlbumName(selectedAlbum)}
-                                                    className="opacity-0 group-hover:opacity-100 transition text-gray-400 hover:text-white"
-                                                    title={t('editAlbumDetails')}
-                                                >
-                                                    <Edit2 size={24} />
-                                                </button>
+                                                <div className="flex gap-2">
+                                                    <button 
+                                                        onClick={() => setEditingAlbumName(selectedAlbum)}
+                                                        className="opacity-0 group-hover:opacity-100 transition text-gray-400 hover:text-white"
+                                                        title={t('editAlbumDetails')}
+                                                    >
+                                                        <Edit2 size={24} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDeleteAlbum(selectedAlbum!)}
+                                                        className="opacity-0 group-hover:opacity-100 transition text-gray-400 hover:text-red-500"
+                                                        title={t('deleteAlbum')}
+                                                    >
+                                                        <Trash2 size={24} />
+                                                    </button>
+                                                </div>
                                             )}
                                         </>
                                      )}
@@ -1940,6 +2064,9 @@ const App: React.FC = () => {
                                       </button>
                                       <button onClick={(e) => { e.stopPropagation(); setEditingSong(song); }} title={t('editInfo')} className="hidden md:block">
                                           <Edit2 size={16} className="text-gray-400 hover:text-white" />
+                                      </button>
+                                      <button onClick={(e) => { e.stopPropagation(); handleDeleteSong(song.id); }} title={t('deleteSong')} className="text-gray-400 hover:text-red-500 transition">
+                                          <Trash2 size={16} />
                                       </button>
                                   </span>
                                   
